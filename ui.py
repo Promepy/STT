@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QDialog, QFormLayout, QComboBox,
     QSpinBox, QPushButton, QFileDialog,
     QCheckBox, QSlider, QGroupBox, QScrollArea,
+    QProgressBar,
 )
 from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -323,6 +324,8 @@ class TranscriberUI(QMainWindow):
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
     stop_requested = pyqtSignal()
+    file_transcribe_requested = pyqtSignal()
+    file_cancel_requested = pyqtSignal()
 
     def __init__(self, settings: AppSettings, audio_engine: AudioEngine):
         super().__init__()
@@ -363,19 +366,49 @@ class TranscriberUI(QMainWindow):
         self.start_btn = self._make_button("Start")
         self.pause_btn = self._make_button("Pause")
         self.stop_btn = self._make_button("Stop")
+        self.file_btn = self._make_button("Transcribe File")
+        self.file_cancel_btn = self._make_button("Cancel")
+        self.file_cancel_btn.hide()
         self.settings_btn = self._make_button("⚙")
 
         self.start_btn.clicked.connect(self._on_start)
         self.pause_btn.clicked.connect(self._on_pause)
         self.stop_btn.clicked.connect(self._on_stop)
+        self.file_btn.clicked.connect(self._on_file_transcribe)
+        self.file_cancel_btn.clicked.connect(self._on_file_cancel)
         self.settings_btn.clicked.connect(self._on_settings)
 
         top_layout.addWidget(self.rec_dot)
         top_layout.addWidget(self.start_btn)
         top_layout.addWidget(self.pause_btn)
         top_layout.addWidget(self.stop_btn)
+        top_layout.addWidget(self.file_btn)
+        top_layout.addWidget(self.file_cancel_btn)
         top_layout.addStretch()
         top_layout.addWidget(self.settings_btn)
+
+        # ---- Progress bar (file transcription) ----
+        self.progress_bar_widget = QWidget()
+        self.progress_bar_widget.setObjectName("progressBarRow")
+        self.progress_bar_widget.setFixedHeight(32)
+        prog_layout = QHBoxLayout()
+        prog_layout.setContentsMargins(15, 4, 15, 4)
+        prog_layout.setSpacing(10)
+        self.progress_bar_widget.setLayout(prog_layout)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(14)
+        prog_layout.addWidget(self.progress_bar, stretch=1)
+
+        self.progress_label = QLabel("0%")
+        self.progress_label.setFixedWidth(42)
+        self.progress_label.setStyleSheet("color: #b0b0b0; font-size: 12px;")
+        prog_layout.addWidget(self.progress_label)
+
+        self.progress_bar_widget.hide()
 
         # ---- Transcription area ----
         self.text_area = QTextEdit()
@@ -384,6 +417,7 @@ class TranscriberUI(QMainWindow):
         self.text_area.setPlaceholderText("Live transcription will appear here…")
 
         main_layout.addWidget(top_bar)
+        main_layout.addWidget(self.progress_bar_widget)
         main_layout.addWidget(self.text_area)
 
     # ---- Helpers ----
@@ -444,6 +478,12 @@ class TranscriberUI(QMainWindow):
     def _on_stop(self):
         self.stop_requested.emit()
 
+    def _on_file_transcribe(self):
+        self.file_transcribe_requested.emit()
+
+    def _on_file_cancel(self):
+        self.file_cancel_requested.emit()
+
     def _on_settings(self):
         dlg = SettingsDialog(self._settings, self._audio_engine, self)
         dlg.exec()
@@ -490,6 +530,24 @@ class TranscriberUI(QMainWindow):
         """Clear the transcription area."""
         self.text_area.clear()
 
+    # ---- File transcription UI helpers ----
+
+    def set_file_transcribing(self, active: bool):
+        """Toggle UI state for file transcription mode."""
+        self.file_btn.setEnabled(not active)
+        self.file_cancel_btn.setVisible(active)
+        self.progress_bar_widget.setVisible(active)
+        # Disable mic controls during file transcription
+        self.start_btn.setEnabled(not active and self._state == AppState.IDLE)
+        if not active:
+            self.progress_bar.setValue(0)
+            self.progress_label.setText("0%")
+
+    def update_file_progress(self, pct: int):
+        """Update the file transcription progress bar."""
+        self.progress_bar.setValue(pct)
+        self.progress_label.setText(f"{pct}%")
+
     # ---- Stylesheet ----
 
     def _apply_styles(self):
@@ -533,5 +591,16 @@ class TranscriberUI(QMainWindow):
                 font-size: 13px;
                 color: #e0e0e0;
                 selection-background-color: #3a6ea5;
+            }
+
+            QProgressBar {
+                background-color: #2a2a2a;
+                border: none;
+                border-radius: 7px;
+            }
+
+            QProgressBar::chunk {
+                background-color: #3a6ea5;
+                border-radius: 7px;
             }
         """)

@@ -9,7 +9,7 @@ import os
 import logging
 from datetime import datetime
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog
 from PyQt6.QtCore import QThread, QObject, pyqtSignal
 
 from settings import AppSettings
@@ -18,6 +18,7 @@ from transcription_engine import TranscriptionEngine
 from autosave import AutosaveManager
 from ui import TranscriberUI, AppState
 from tray_icon import TrayIcon
+from file_transcriber import FileTranscriptionWorker, FILE_DIALOG_FILTER
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -123,11 +124,17 @@ class TranscriberApp:
         self._thread: QThread | None = None
         self._transcription_engine: TranscriptionEngine | None = None
 
+        # File transcription state
+        self._file_worker: FileTranscriptionWorker | None = None
+        self._file_output = None  # output file handle for file transcription
+
         # Wire UI signals
         self.ui.start_requested.connect(self.start_session)
         self.ui.pause_requested.connect(self.pause_session)
         self.ui.resume_requested.connect(self.resume_session)
         self.ui.stop_requested.connect(self.stop_session)
+        self.ui.file_transcribe_requested.connect(self.start_file_transcription)
+        self.ui.file_cancel_requested.connect(self.cancel_file_transcription)
 
         # Wire tray signals
         self.tray.start_requested.connect(self.start_session)
@@ -257,6 +264,84 @@ class TranscriberApp:
         QMessageBox.warning(self.ui, "Error", msg)
         self.stop_session()
 
+    # ---- File transcription ----
+
+    def start_file_transcription(self):
+        """Open file dialog, then start background file transcription."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.ui, "Select Media File", "", FILE_DIALOG_FILTER,
+        )
+        if not file_path:
+            return  # user cancelled the dialog
+
+        # Create output file
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        save_dir = self.settings.save_path
+        os.makedirs(save_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(save_dir, f"{base_name}_transcript_{ts}.txt")
+        try:
+            self._file_output = open(output_path, "a", encoding="utf-8")
+        except OSError as e:
+            QMessageBox.critical(self.ui, "File Error", f"Cannot create output file:\n{e}")
+            return
+
+        logger.info("File transcription started: %s → %s", file_path, output_path)
+
+        # Prepare UI
+        self.ui.clear_text()
+        self.ui.set_file_transcribing(True)
+
+        # Start worker
+        self._file_worker = FileTranscriptionWorker(file_path)
+        self._file_worker.progress_updated.connect(self._on_file_progress)
+        self._file_worker.text_updated.connect(self._on_file_text)
+        self._file_worker.finished_signal.connect(self._on_file_finished)
+        self._file_worker.error_occurred.connect(self._on_file_error)
+        self._file_worker.start()
+
+    def cancel_file_transcription(self):
+        """Cancel ongoing file transcription."""
+        if self._file_worker:
+            self._file_worker.cancel()
+            self._file_worker.wait(5000)
+            self._cleanup_file_transcription()
+            self.ui.append_text("\n— File transcription cancelled —")
+            logger.info("File transcription cancelled")
+
+    def _on_file_progress(self, pct: int):
+        self.ui.update_file_progress(pct)
+
+    def _on_file_text(self, text: str):
+        self.ui.append_text(text)
+        if self._file_output:
+            try:
+                self._file_output.write(text + "\n")
+                self._file_output.flush()
+            except OSError as e:
+                logger.error("File write error: %s", e)
+
+    def _on_file_finished(self):
+        self._cleanup_file_transcription()
+        self.ui.append_text("\n— File transcription complete —")
+        logger.info("File transcription finished")
+
+    def _on_file_error(self, msg: str):
+        self._cleanup_file_transcription()
+        logger.error("File transcription error: %s", msg)
+        QMessageBox.warning(self.ui, "File Transcription Error", msg)
+
+    def _cleanup_file_transcription(self):
+        """Reset file transcription state and close output file."""
+        self.ui.set_file_transcribing(False)
+        if self._file_output:
+            try:
+                self._file_output.close()
+            except OSError:
+                pass
+            self._file_output = None
+        self._file_worker = None
+
     # ---- Window management ----
 
     def _show_window(self):
@@ -276,6 +361,8 @@ class TranscriberApp:
         """Clean up all resources."""
         if self._thread and self._thread.isRunning():
             self.stop_session()
+        if self._file_worker:
+            self.cancel_file_transcription()
         self.tray.hide()
         self.audio_engine.terminate()
 

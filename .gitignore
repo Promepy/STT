@@ -26,6 +26,7 @@ error.log
 # Internal docs (not for repo)
 plan.md
 system-audio-setup.md
+file_transcription_feature_spec.md
 
 # IDE
 .vscode/
