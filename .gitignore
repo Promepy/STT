@@ -1,0 +1,38 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Vosk models (large binary files — download separately)
+models/
+
+# Output transcriptions
+output/
+
+# Logs
+*.log
+error.log
+
+# macOS
+.DS_Store
+
+# Internal docs (not for repo)
+plan.md
+system-audio-setup.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# PyInstaller
+*.manifest
+*.spec
